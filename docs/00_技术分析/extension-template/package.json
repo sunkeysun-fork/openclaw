@@ -1,0 +1,37 @@
+{
+  "name": "@openclaw/<channel-id>",
+  "version": "2026.2.24",
+  "private": true,
+  "description": "OpenClaw <Channel Name> channel plugin",
+  "type": "module",
+  "dependencies": {
+    "//": "在此添加通道 SDK 依赖,例如:"
+  },
+  "devDependencies": {
+    "openclaw": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "<channel-id>",
+      "label": "<Channel Name>",
+      "selectionLabel": "<Channel Name> (brief description)",
+      "docsPath": "/channels/<channel-id>",
+      "docsLabel": "<channel-id>",
+      "blurb": "Brief description of channel functionality",
+      "aliases": [
+        "<alias1>",
+        "<alias2>"
+      ],
+      "order": 50,
+      "quickstartAllowFrom": true
+    },
+    "install": {
+      "npmSpec": "@openclaw/<channel-id>",
+      "localPath": "extensions/<channel-id>",
+      "defaultChoice": "npm"
+    }
+  }
+}
