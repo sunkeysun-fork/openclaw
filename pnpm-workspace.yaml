@@ -4,11 +4,15 @@ packages:
   - packages/*
   - extensions/*
 
+engineStrict: false
+
+nodeLinker: hoisted
+
 onlyBuiltDependencies:
-  - "@lydell/node-pty"
-  - "@matrix-org/matrix-sdk-crypto-nodejs"
-  - "@napi-rs/canvas"
-  - "@whiskeysockets/baileys"
+  - '@lydell/node-pty'
+  - '@matrix-org/matrix-sdk-crypto-nodejs'
+  - '@napi-rs/canvas'
+  - '@whiskeysockets/baileys'
   - authenticate-pam
   - esbuild
   - node-llama-cpp
