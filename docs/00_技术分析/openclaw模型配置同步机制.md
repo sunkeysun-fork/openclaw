@@ -7,7 +7,7 @@ OpenClaw 的模型配置涉及两个核心文件：
 - **`openclaw.json`**：用户配置文件，位于 state 目录下（如 `~/.openclaw/openclaw.json`）
 - **`models.json`**：模型注册表文件，位于 `agents/main/agent/models.json`，由代码自动生成
 
-本文档分析 `openclaw.json` 中的模型配置如何同步到 `models.json`，以及 `merge` 与 `overwrite` 两种模式的区别。
+本文档分析 `openclaw.json` 中的模型配置如何同步到 `models.json`，以及 `merge` 与 `replace` 两种模式的区别。
 
 ## 核心文件与职责
 
@@ -45,7 +45,35 @@ OpenClaw 的模型配置涉及两个核心文件：
 
 ### models.json
 
-由 `ensureOpenClawModelsJson()` 自动生成的模型注册表，供 pi-ai 的 `ModelRegistry` 读取。它描述"有哪些 provider 可用、每个 provider 有哪些模型"。
+**pi-ai（底层 agent 引擎）的模型注册表**。pi-ai 本身不知道 `openclaw.json` 的存在，它只认 `models.json`。OpenClaw 作为上层应用，通过 `ensureOpenClawModelsJson()` 把用户配置"翻译"成 pi-ai 能理解的格式写入 `models.json`，起到桥梁作用。
+
+`models.json` 承载了 `ModelRegistry` 需要的全部信息：
+
+- **provider 连接信息**：`baseUrl`、`apiKey`、`api`（协议类型）、`headers` 等
+- **模型元数据**：`contextWindow`、`maxTokens`、`reasoning`、`input` 类型、`cost` 等
+- **模型发现**：`ModelRegistry` 通过 `find(provider, modelId)` 查找可用模型，数据源就是 `models.json`
+
+本质上是一个**缓存/中间层**：把 OpenClaw 的多来源配置（`openclaw.json` 显式配置 + 环境变量隐式发现 + 可选的旧文件保留）归一化成 pi-ai 引擎直接消费的单一文件。
+
+## 运行时模型查找优先级
+
+当 agent 运行时需要解析一个 `provider/modelId` 时，`resolveModel()` 按以下顺序查找：
+
+**源码位置**：`src/agents/pi-embedded-runner/model.ts:46-124`
+
+```
+1. ModelRegistry.find(provider, modelId)        ← 读 models.json（最高优先）
+      ↓ 找不到
+2. buildInlineProviderModels(cfg.models.providers) ← 回退读 openclaw.json
+      ↓ 找不到
+3. resolveForwardCompatModel()                   ← 前向兼容 fallback
+      ↓ 找不到
+4. OpenRouter 特殊处理 / providerCfg 兜底构造     ← 按 provider 配置构造
+      ↓ 都找不到
+5. 报错 "Unknown model: provider/modelId"
+```
+
+**关键结论**：运行时实际使用的 `baseUrl` 等连接信息**来自 `models.json`**（第一优先级），只有在 `models.json` 中找不到对应 provider/model 时，才会回退去读 `openclaw.json` 的原始配置。这意味着如果 `models.json` 中的 `baseUrl` 是旧的，即使 `openclaw.json` 已经更新，实际请求仍然会发到旧地址。
 
 ## 数据流向
 
@@ -241,11 +269,31 @@ if (mode === "merge") {
 
 对于大多数用户，如果只通过 `openclaw.json` 管理 provider 配置，`replace` 模式行为更可预测、更干净。`merge` 模式的价值在于兼容手动编辑 `models.json` 的场景，但代价是"删除一个 provider"变得困难——从 `openclaw.json` 和环境变量中移除后，旧 `models.json` 中的残留依然存在。
 
-> **注意**：配置值是 `"replace"`，不是 `"overwrite"`。Schema 校验只接受 `"merge"` 和 `"replace"` 两个值。
->
-> **源码位置**：
-> - 类型定义：`src/config/types.models.ts:64` — `mode?: "merge" | "replace"`
-> - Zod schema：`src/config/zod-schema.core.ts:86` — `z.union([z.literal("merge"), z.literal("replace")])`
+### 配置值与校验
+
+`models.mode` 只接受两个值：`"merge"` 和 `"replace"`，默认值为 `"merge"`。使用其他值（如 `"overwrite"`）会导致 Zod schema 校验报错：
+
+```
+[OpenClaw] Invalid config at /path/to/openclaw.json:
+- models.mode: Invalid input
+```
+
+**源码位置**：
+- 类型定义：`src/config/types.models.ts:64` — `mode?: "merge" | "replace"`
+- Zod schema：`src/config/zod-schema.core.ts:86` — `z.union([z.literal("merge"), z.literal("replace")])`
+- 默认值：`src/agents/models-config.ts:16` — `const DEFAULT_MODE = "merge"`
+
+### 影响范围
+
+`models.mode` **仅影响 `models.json` 的生成策略**，不影响其他任何行为。
+
+在整个代码库中，`cfg.models?.mode` 只在 `ensureOpenClawModelsJson()` 中被消费（`src/agents/models-config.ts:129`），用于决定是否与旧 `models.json` 合并。其他引用该字段的位置（如 `onboard-auth.config-shared.ts`、`onboard-custom.ts`、`vllm-setup.ts` 等）都只是在写入配置时透传用户已有的 `mode` 值，不消费它。
+
+不受影响的模块包括：
+- 运行时模型选择（由 `agents.defaults.model.primary` 控制）
+- Provider 鉴权逻辑
+- Agent 配置与调度
+- Gateway、插件等其他子系统
 
 ## 配置路径解析
 
