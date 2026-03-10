@@ -130,6 +130,37 @@ child.unref();        // 从父进程事件循环中解除引用
 - 这是对 Unix `execv` 的模拟（Node.js 没有原生 `execv`），代价是 PID 会变
 - 不会产生僵尸进程，因为父进程自身退出后，子进程被 init 接管
 
+## Linux `execve` 对比章节
+
+### `execve` 是什么
+
+`execve` 是 Linux 内核提供的进程镜像替换系统调用：当前进程不退出、PID 不变，但内存映像会被新程序完全替换。调用成功后，原代码不会继续执行。
+
+### 与 OpenClaw 三种模式对比
+
+| 维度 | Linux `execve` | OpenClaw `disabled` | OpenClaw `supervised` | OpenClaw `spawned` |
+|---|---|---|---|---|
+| 控制层级 | 内核系统调用 | 应用代码循环 | 系统进程管理器 | 应用发起 + OS 执行 |
+| PID | 不变 | 不变 | 变化 | 变化 |
+| 新代码生效 | 是 | 否 | 是 | 是 |
+| 内存状态 | 全部替换 | 局部重建（server/队列） | 全新进程 | 全新进程 |
+| 触发后行为 | 直接进入新程序入口 | `server.close()` 后 `params.start()` | `exit(0)` 等待 supervisor 拉起 | `spawn(detached)+unref` 后 `exit(0)` |
+
+### 为什么 OpenClaw 没直接用 `execve`
+
+OpenClaw 当前实现需要在重启前完成“优雅排空任务、关闭连接、释放锁”等流程，并且在不同部署环境（supervisor/非 supervisor）下保持一致行为。
+
+因此 OpenClaw 采用了两层策略：
+
+1. **测试/开发场景**：`OPENCLAW_NO_RESPAWN=1`，走进程内重建 server（不换代码，快速恢复状态）。
+2. **生产场景**：优先走 `supervised` 或 `spawned`，通过新进程获得新代码与干净内存。
+
+### 实践建议
+
+- 目标是“配置生效且不中断太久”时，进程内重启即可。
+- 目标是“代码升级生效”时，必须走 `supervised` 或 `spawned`（即完整进程替换）。
+- 在 Linux 上若使用 systemd，推荐 `supervised` 路径：职责更清晰，重启策略由系统统一托管。
+
 ## 重启触发机制
 
 ### SIGUSR1 信号
